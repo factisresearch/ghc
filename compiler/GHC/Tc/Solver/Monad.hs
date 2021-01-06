@@ -157,6 +157,7 @@ import GHC.Tc.Types.Evidence
 import GHC.Core.Class
 import GHC.Core.TyCon
 import GHC.Tc.Errors   ( solverDepthErrorTcS )
+import GHC.Tc.Utils.Unify ( canSolveByUnification )
 
 import GHC.Types.Name
 import GHC.Types.TyThing
@@ -2337,7 +2338,7 @@ mightMatchLater given_pred given_loc wanted_pred wanted_loc
   | prohibitedSuperClassSolve given_loc wanted_loc
   = False
 
-  | SurelyApart <- tcUnifyTysFG bind_meta_tv [flattened_given] [flattened_wanted]
+  | SurelyApart <- tcUnifyTysFG bind_fun [flattened_given] [flattened_wanted]
   = False
 
   | otherwise
@@ -2352,24 +2353,29 @@ mightMatchLater given_pred given_loc wanted_pred wanted_loc
     ([flattened_given, flattened_wanted], var_mapping)
       = flattenTysX in_scope [given_pred, wanted_pred]
 
-    bind_meta_tv :: TcTyVar -> BindFlag
+    bind_fun :: BindFun
     -- Any meta tyvar may be unified later, so we treat it as
     -- bindable when unifying with givens. That ensures that we
     -- conservatively assume that a meta tyvar might get unified with
     -- something that matches the 'given', until demonstrated
     -- otherwise.  More info in Note [Instance and Given overlap]
     -- in GHC.Tc.Solver.Interact
-    bind_meta_tv tv | is_meta_tv tv = BindMe
+    bind_fun tv rhs_ty
+      | isMetaTyVar tv
+      , canSolveByUnification (metaTyVarInfo tv) rhs_ty
+         -- this checks for CycleBreakerTvs and TyVarTvs; forgetting
+         -- the latter was #19106.
+      = BindMe
 
-                    | Just (_fam_tc, fam_args) <- lookupVarEnv var_mapping tv
-                    , anyFreeVarsOfTypes is_meta_tv fam_args
-                    = BindMe
+      | Just (_fam_tc, fam_args) <- lookupVarEnv var_mapping tv
+      , anyFreeVarsOfTypes (isMetaTyVar <&&> not . isCycleBreakerTyVar) fam_args
+        -- Ideally, we'd like to use canSolveByUnification here, but we don't
+        -- have an RHS. So we conservatively allow unification of TyVarTvs here.
+        -- cf. the implementation of canSolveByUnification
+      = BindMe
 
-                    | otherwise     = Skolem
-
-     -- CycleBreakerTvs really stands for a type family application in
-     -- a given; these won't contain touchable meta-variables
-    is_meta_tv = isMetaTyVar <&&> not . isCycleBreakerTyVar
+      | otherwise
+      = Apart
 
 prohibitedSuperClassSolve :: CtLoc -> CtLoc -> Bool
 -- See Note [Solving superclass constraints] in GHC.Tc.TyCl.Instance
