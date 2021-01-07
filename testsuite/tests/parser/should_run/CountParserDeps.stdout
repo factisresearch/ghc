@@ -237,3 +237,4 @@ GHC.Utils.Panic
 GHC.Utils.Panic.Plain
 GHC.Utils.Ppr
 GHC.Utils.Ppr.Colour
+GHC.Utils.Strict
